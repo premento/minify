@@ -91,17 +91,35 @@ class CSS extends Minify
      */
     protected function moveImportsToTop($content)
     {
-        if (preg_match_all('/(;?)(@import (?<url>url\()?(?P<quotes>["\']?).+?(?P=quotes)(?(url)\)));?/', $content, $matches)) {
+        /*
+         * A @charset rule has to be the very first thing in a stylesheet, so it
+         * moves to the front before the imports do. Without this, the `;` that
+         * used to separate it from an @import was matched as the (optional)
+         * terminator of the import, eating the @charset's own one.
+         */
+        $charset = '';
+        if (preg_match('/^@charset\s+[^;]+;/i', $content, $charsetMatch)) {
+            $charset = $charsetMatch[0];
+            $content = substr($content, strlen($charset));
+        }
+
+        /*
+         * Match a complete @import statement, media query & all: a media query,
+         * layer() or supports() descriptor belongs to the import, so it has to
+         * move along with it. Stopping the match at the first `;` would leave
+         * it behind as a fragment of CSS.
+         */
+        if (preg_match_all('/(@import\s+(?:url\((?P<quotes>["\']?)(?P<path1>[^"\'\)]*)(?P=quotes)\)|(?P<single>["\'])(?P<path2>[^"\']*)(?P=single))[^;]*);?/', $content, $matches)) {
             // remove from content
             foreach ($matches[0] as $import) {
                 $content = str_replace($import, '', $content);
             }
 
             // add to top
-            $content = implode(';', $matches[2]) . ';' . trim($content, ';');
+            $content = implode(';', array_map('trim', $matches[1])) . ';' . trim($content, ';');
         }
 
-        return $content;
+        return $charset . $content;
     }
 
     /**

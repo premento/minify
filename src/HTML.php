@@ -42,7 +42,7 @@ class HTML extends Minify
      *
      * @var string
      */
-    const REGEX_ATTRIBUTES = '(?:\s+[^\s=\/>]+(?:\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s"\'>]*))?)*';
+    public const REGEX_ATTRIBUTES = '(?:\s+[^\s=\/>]+(?:\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s"\'>]*))?)*';
 
     /**
      * Elements whose content is rendered exactly as authored, whitespace and

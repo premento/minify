@@ -7,19 +7,13 @@
   displayDetailsOnTestsThatTriggerErrors="true"
   displayDetailsOnTestsThatTriggerNotices="true"
   displayDetailsOnTestsThatTriggerWarnings="true"
-  xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.2/phpunit.xsd"
+  xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.0/phpunit.xsd"
 >
-  <coverage>
-    <report>
-      <clover outputFile="build/coverage.clover"/>
-    </report>
-  </coverage>
   <testsuites>
     <testsuite name="minify">
       <directory suffix="Test.php">tests</directory>
     </testsuite>
   </testsuites>
-  <logging/>
   <source>
     <include>
       <directory suffix=".php">src</directory>

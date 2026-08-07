@@ -182,6 +182,19 @@ class CSSTest extends CompatTestCase
     }
 
     /**
+     * With the maximum import size set to 0, not even a small file may be
+     * embedded as a data: uri.
+     */
+    public function testMaxImportSizeZero()
+    {
+        $minifier = $this->getMinifier();
+        $minifier->setMaxImportSize(0);
+        $minifier->add(__DIR__ . '/sample/import_files/index.css');
+
+        $this->assertEquals('body{background:url(file.png)}', $minifier->minify());
+    }
+
+    /**
      * Strings larger than 64KB must survive intact: the extraction pattern used
      * to be bounded at 65535 characters, above which it matched the wrong pair
      * of quotes & the string content got minified as if it were code.
@@ -886,6 +899,38 @@ body{font-family:sans-serif}',
 @import url("http://minify.dev/?a=1&amp;b=some/*lala*/thing") ;
 body{font-family:sans-serif}',
             '@import url(http://minify.dev/?a=1&amp;b=some/*lala*/thing);p{color:red}body{font-family:sans-serif}',
+        );
+
+        // @import with a media query, layer() or supports() condition must not
+        // be split at the first `;`
+        $tests[] = array(
+            '@import "x.css" screen;',
+            '@import "x.css" screen;',
+        );
+        $tests[] = array(
+            '@import url(y.css) print;',
+            '@import url(y.css) print;',
+        );
+        $tests[] = array(
+            '@import "a.css" layer(foo);',
+            '@import "a.css" layer(foo);',
+        );
+        $tests[] = array(
+            '@import "a.css" supports(display:grid) screen;',
+            '@import "a.css" supports(display:grid) screen;',
+        );
+
+        // a @charset rule keeps its `;` & stays first when an @import below it
+        // moves to the top
+        $tests[] = array(
+            '@charset "utf-8";@import "x.css";body{color:red}',
+            '@charset "utf-8";@import "x.css";body{color:red}',
+        );
+
+        // consecutive imports move to the top together
+        $tests[] = array(
+            '@import "a.css";@import "b.css";body{}',
+            '@import "a.css";@import "b.css";',
         );
 
         // https://github.com/matthiasmullie/minify/issues/259

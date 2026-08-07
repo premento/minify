@@ -278,6 +278,15 @@ class JS extends Minify
 
         // single-line comments
         $this->registerPattern('/\/\/.*$/m', '');
+
+        /*
+         * Legacy HTML comments (Annex B): `<!--` opens a comment running to the
+         * end of the line, and so does `-->` when it appears at the start of
+         * one. Without stripping them, the `-->` got joined onto the code in
+         * front of it, which is a SyntaxError.
+         */
+        $this->registerPattern('/<!--.*$/m', '');
+        $this->registerPattern('/^\s*-->.*$/m', '');
     }
 
     /**
@@ -401,6 +410,19 @@ class JS extends Minify
         $content = preg_replace('/\n+/', "\n", $content);
 
         /*
+         * A newline after `return` triggers ASI: `return` returns `undefined`,
+         * and whatever starts on the next line is a separate statement. All the
+         * rules below may strip that newline (e.g. in front of `(`, `[`, `+` or
+         * `-`), which would silently change what gets returned, so hide it from
+         * them & put it back right before we're done.
+         *
+         * `;`, `}` and whitespace are deliberately left unprotected: joining
+         * `return` with those doesn't change anything, as ASI would have ended
+         * the statement there anyway.
+         */
+        $content = preg_replace('/\breturn\n(?=[\(\[\.\+\-\/"\'`])/', "return\x00", $content);
+
+        /*
          * These are derived from constant lists, so build them once & reuse
          * them: this method runs once per source file, and preg_quote-ing every
          * keyword & operator each time adds up. The arrays are copied out of the
@@ -464,8 +486,12 @@ class JS extends Minify
          * (such as when followed by a string or regex)
          * Same for whitespace in between `)` and `{`, or between `{` and some
          * keywords.
+         *
+         * Only non-line feed whitespace: a newline after `return` triggers ASI,
+         * so `return\n"x"` returns `undefined`, not `"x"` - the two must never
+         * be joined.
          */
-        $content = preg_replace('/\breturn\s+(["\'\/\+\-])/', 'return$1', $content);
+        $content = preg_replace('/\breturn[^\S\n]+(["\'\/\+\-])/', 'return$1', $content);
         $content = preg_replace('/\)\s+\{/', '){', $content);
         $content = preg_replace('/}\n(else|catch|finally)\b/', '}$1', $content);
 
@@ -535,6 +561,9 @@ class JS extends Minify
          */
         $content = preg_replace('/;(\}|$)/s', '\\1', $content);
         $content = ltrim($content, ';');
+
+        // put the ASI newlines after `return` back
+        $content = str_replace("\x00", "\n", $content);
 
         // get rid of remaining whitespace af beginning/end
         return trim($content);
@@ -679,6 +708,11 @@ class JS extends Minify
          * Since PHP doesn't allow variable-length (to account for the
          * whitespace) lookbehind assertions, I need to capture the leading
          * character and check if it's a `.`
+         *
+         * The trailing `:` (of a property name, or of a ternary's middle
+         * operand) is captured in a lookahead rather than consumed: consuming
+         * it left the next value - `a ? true:false` - unable to match, because
+         * the `:` right in front of it had been taken by the previous match.
          */
         $callback = function ($match) {
             $before = trim($match[1]);
@@ -702,9 +736,13 @@ class JS extends Minify
                 return $match[0];
             }
 
-            return $match[1] . ($match[2] === 'true' ? '!0' : '!1') . $colon;
+            /*
+             * The `:` is captured in a lookahead only, so it's still in the
+             * content after this match & must not be emitted again.
+             */
+            return $match[1] . ($match[2] === 'true' ? '!0' : '!1');
         };
-        $content = preg_replace_callback('/(^|.\s*)\b(true|false)\b(\s*:)?/', $callback, $content);
+        $content = preg_replace_callback('/(^|.\s*)\b(true|false)\b(?=(\s*:))?/', $callback, $content);
 
         // for(;;) is exactly the same as while(true), but shorter :)
         $content = preg_replace('/\bwhile\(!0\){/', 'for(;;){', $content);

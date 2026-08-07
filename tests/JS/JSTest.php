@@ -1444,6 +1444,38 @@ b=2',
             "x=in['message']",
         );
 
+        // a newline after `return` triggers ASI; it must not be stripped or the
+        // function would start returning a value instead of `undefined`
+        $tests[] = array(
+            "function f() { return\n\"x\"; }",
+            "function f(){return\n\"x\"}",
+        );
+        $tests[] = array(
+            "function f() { return\n(x); }",
+            "function f(){return\n(x)}",
+        );
+        $tests[] = array(
+            "var x=5;function f() { return\n+x; }",
+            "var x=5;function f(){return\n+x}",
+        );
+        $tests[] = array(
+            "function f() { return\n[1]; }",
+            "function f(){return\n[1]}",
+        );
+
+        // legacy HTML comments (Annex B) are stripped like // comments
+        $tests[] = array(
+            "<!--\nvar x = 1;\n-->",
+            'var x=1',
+        );
+
+        // in a spaceless ternary both operands get shortened: the `:` used to
+        // be consumed by the first match, hiding the second operand from it
+        $tests[] = array(
+            'x = a ? true:false',
+            'x=a?!0:!1',
+        );
+
         // known minified files to help doublecheck changes in places not yet
         // anticipated in these tests
         $files = glob(__DIR__ . '/sample/minified/*.js');
