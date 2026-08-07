@@ -21,6 +21,12 @@ Removes whitespace, strips comments, combines files (incl. `@import` statements 
 * `bold` -> `700`
 * `p {}` -> removed
 
+**HTML**
+* whitespace collapsed, and removed entirely where it can't be rendered
+* comments removed (conditional comments & `@license`/`@preserve` kept)
+* inline `<style>` & `<script>` minified with the CSS & JS minifiers
+* `<script type="text/javascript">` -> `<script>`
+
 And it comes with a huge test suite.
 
 
@@ -57,10 +63,34 @@ echo $minifier->minify();
 // just look at the CSS example; it's exactly the same, but with the JS class & JS files :)
 ```
 
+### HTML
+
+```php
+use MatthiasMullie\Minify;
+
+$minifier = new Minify\HTML($sourcePath);
+
+// save minified file to disk
+$minifier->minify($targetPath);
+
+// or just output the content
+echo $minifier->minify();
+```
+
+Whitespace in HTML is not like whitespace in CSS or JS: the space between two
+inline elements is rendered, so removing it changes the page. This minifier is
+therefore conservative by default - it collapses runs of whitespace into a
+single space, and only removes it completely next to block-level elements,
+where a browser couldn't have rendered it anyway. `<pre>` and `<textarea>`
+content is left exactly as it was.
+
+See [setAggressiveWhitespace()](#setaggressivewhitespaceaggressive-html-only)
+if you want to trade that safety for a few more bytes.
+
 
 ## Methods
 
-Available methods, for both CSS & JS minifier, are:
+Available methods, for the CSS, JS & HTML minifiers, are:
 
 ### __construct(/* overload paths */)
 
@@ -127,6 +157,42 @@ $extensions = array(
 );
 
 $minifier->setImportExtensions($extensions);
+```
+
+### setAggressiveWhitespace($aggressive) *(HTML only)*
+
+By default, the HTML minifier only removes whitespace a browser wouldn't have
+rendered anyway. This method makes it remove *all* whitespace between tags,
+which is smaller, but also removes whitespace that **is** rendered:
+
+```html
+<!-- source -->
+<p>Some <strong>bold</strong> <em>and italic</em> text.</p>
+
+<!-- default: renders as "Some bold and italic text." -->
+<p>Some <strong>bold</strong> <em>and italic</em> text.</p>
+
+<!-- aggressive: renders as "Some boldand italic text." -->
+<p>Some <strong>bold</strong><em>and italic</em> text.</p>
+```
+
+Only turn this on if you know your markup doesn't rely on that spacing.
+
+```php
+$minifier->setAggressiveWhitespace();
+```
+
+### setMinifyInlineAssets($minify) *(HTML only)*
+
+By default, the content of `<style>` and `<script>` elements is minified with
+this library's CSS and JS minifiers. Pass `false` to leave it untouched.
+
+Content that isn't JavaScript (`<script type="application/ld+json">`, inline
+templates, ...) is always left alone. If minifying an inline asset fails, its
+content is kept as-is rather than failing the whole document.
+
+```php
+$minifier->setMinifyInlineAssets(false);
 ```
 
 

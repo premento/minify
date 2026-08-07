@@ -1,0 +1,67 @@
+#!/usr/bin/env php
+<?php
+use MatthiasMullie\Minify;
+
+// command line utility to minify HTML
+if (file_exists(__DIR__ . '/../../../autoload.php')) {
+    // if installed as a dependency (vendor/matthiasmullie/minify/bin)
+    require_once __DIR__ . '/../../../autoload.php';
+} elseif (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    // if installed standalone (git clone + composer install)
+    require_once __DIR__ . '/../vendor/autoload.php';
+} else {
+    // no autoloader available: load the library by hand. Parents must be
+    // loaded before their children, since there's nothing to autoload them.
+    require_once __DIR__ . '/../src/Exception.php';
+    require_once __DIR__ . '/../src/Exceptions/BasicException.php';
+    require_once __DIR__ . '/../src/Exceptions/IOException.php';
+    require_once __DIR__ . '/../src/Exceptions/FileImportException.php';
+    require_once __DIR__ . '/../src/Exceptions/PatternMatchException.php';
+    require_once __DIR__ . '/../src/Minify.php';
+    require_once __DIR__ . '/../src/CSS.php';
+    require_once __DIR__ . '/../src/JS.php';
+    require_once __DIR__ . '/../src/HTML.php';
+
+    // inline <style> minification goes through the CSS minifier, which relies
+    // on matthiasmullie/path-converter; we can't load that without an
+    // autoloader, so fail with something more helpful than "class not found"
+    if (!class_exists('MatthiasMullie\\PathConverter\\Converter')) {
+        fwrite(STDERR, 'Missing dependency matthiasmullie/path-converter; please run "composer install".' . PHP_EOL);
+        exit(1);
+    }
+}
+
+error_reporting(E_ALL);
+// check PHP setup for cli arguments
+if (!isset($_SERVER['argv']) && !isset($argv)) {
+    fwrite(STDERR, 'Please enable the "register_argc_argv" directive in your php.ini' . PHP_EOL);
+    exit(1);
+} elseif (!isset($argv)) {
+    $argv = $_SERVER['argv'];
+}
+// check if path to file given
+if (!isset($argv[1])) {
+    fwrite(STDERR, 'Argument expected: path to file' . PHP_EOL);
+    exit(1);
+}
+// check if script run in cli environment
+if ('cli' !== php_sapi_name()) {
+    fwrite(STDERR, $argv[0] . ' must be run in the command line' . PHP_EOL);
+    exit(1);
+}
+// check if source file exists
+if (!file_exists($argv[1])) {
+    fwrite(STDERR, 'Source file "' . $argv[1] . '" not found' . PHP_EOL);
+    exit(1);
+}
+
+try {
+    $minifier = new Minify\HTML($argv[1]);
+    if (in_array('--aggressive-whitespace', $argv, true)) {
+        $minifier->setAggressiveWhitespace();
+    }
+    echo $minifier->minify();
+} catch (\Exception $e) {
+    fwrite(STDERR, $e->getMessage() . PHP_EOL);
+    exit(1);
+}
