@@ -72,25 +72,37 @@ abstract class Minify
      */
     public function add($data /* $data = null, ... */)
     {
-        // bogus "usage" of parameter $data: scrutinizer warns this variable is
-        // not used (we're using func_get_args instead to support overloading),
-        // but it still needs to be defined because it makes no sense to have
-        // this function without argument :)
-        $args = array($data) + func_get_args();
+        // parameter $data is not read directly - we're using func_get_args()
+        // instead, to support overloading - but it still needs to be declared,
+        // because it makes no sense to have this function without argument :)
+        $args = func_get_args();
 
         // this method can be overloaded
         foreach ($args as $data) {
             if (is_array($data)) {
-                call_user_func_array(array($this, 'add'), $data);
+                // array_values: string keys would be interpreted as named
+                // arguments; skip empty arrays, which would call add() without
+                // the argument it requires
+                if ($data) {
+                    call_user_func_array(array($this, 'add'), array_values($data));
+                }
                 continue;
             }
 
             // redefine var
             $data = (string) $data;
 
+            /*
+             * Only a source that was actually read from disk gets to keep its
+             * path as key (we need it to resolve relative paths later on.) Don't
+             * infer that from comparing input & output of load(): a file whose
+             * content happens to equal its own path would lose its path.
+             */
+            $isFile = $this->canImportFile($data);
+
             // load data
             $value = $this->load($data);
-            $key = ($data != $value) ? $data : count($this->data);
+            $key = $isFile ? $data : count($this->data);
 
             // replace CR linefeeds etc.
             // @see https://github.com/matthiasmullie/minify/pull/139
@@ -114,16 +126,17 @@ abstract class Minify
      */
     public function addFile($data /* $data = null, ... */)
     {
-        // bogus "usage" of parameter $data: scrutinizer warns this variable is
-        // not used (we're using func_get_args instead to support overloading),
-        // but it still needs to be defined because it makes no sense to have
-        // this function without argument :)
-        $args = array($data) + func_get_args();
+        // see add(): $data is not read directly, but still has to be declared
+        $args = func_get_args();
 
         // this method can be overloaded
         foreach ($args as $path) {
             if (is_array($path)) {
-                call_user_func_array(array($this, 'addFile'), $path);
+                // see add(): string keys would become named arguments, and an
+                // empty array would call addFile() without its argument
+                if ($path) {
+                    call_user_func_array(array($this, 'addFile'), array_values($path));
+                }
                 continue;
             }
 
@@ -239,9 +252,31 @@ abstract class Minify
     {
         $handler = $this->openFileForWriting($path);
 
-        $this->writeToFile($handler, $content);
+        // no finally: this library still supports PHP < 5.5
+        try {
+            $this->writeToFile($handler, $content, $path);
+        } catch (IOException $e) {
+            @fclose($handler);
+
+            throw $e;
+        }
 
         @fclose($handler);
+    }
+
+    /**
+     * Discard all registered patterns & extracted data.
+     *
+     * Patterns are registered right before the content they apply to is
+     * processed, and they're never useful afterwards. Clearing them here keeps
+     * processing one source from leaking state into the next one, and keeps a
+     * second execute() call on the same instance from accumulating duplicates
+     * of every pattern (which would make replace() do the same work twice).
+     */
+    protected function reset()
+    {
+        $this->patterns = array();
+        $this->extracted = array();
     }
 
     /**
@@ -274,8 +309,9 @@ abstract class Minify
                 # either starts with an !
                 !
             |
-                # or, after some number of characters which do not end the comment
-                (?:(?!\*\/).)*?
+                # or, after some number of characters (this is the comment
+                # body, which cannot contain the comment terminator anyway)
+                .*?
 
                 # there is either a @license or @preserve tag
                 @(?:license|preserve)
@@ -423,7 +459,7 @@ abstract class Minify
      * and after doing all other minifying, we can restore the original content
      * via restoreStrings().
      *
-     * @param string[optional] $chars
+     * @param string[optional] $chars List of quote characters, one per string delimiter
      * @param string[optional] $placeholderPrefix
      */
     protected function extractStrings($chars = '\'"', $placeholderPrefix = '')
@@ -431,8 +467,15 @@ abstract class Minify
         // PHP only supports $this inside anonymous functions since 5.4
         $minifier = $this;
         $callback = function ($match) use ($minifier, $placeholderPrefix) {
-            // check the second index here, because the first always contains a quote
-            if ($match[2] === '') {
+            /*
+             * Thanks to the branch reset group in the pattern below, group 1 is
+             * the string content regardless of which quote character matched.
+             * The quote itself is simply the first character of the match.
+             */
+            $quote = $match[0][0];
+            $content = $match[1];
+
+            if ($content === '') {
                 /*
                  * Empty strings need no placeholder; they can't be confused for
                  * anything else anyway.
@@ -443,31 +486,46 @@ abstract class Minify
             }
 
             $count = count($minifier->extracted);
-            $placeholder = $match[1] . $placeholderPrefix . $count . $match[1];
-            $minifier->extracted[$placeholder] = $match[1] . $match[2] . $match[1];
+            $placeholder = $quote . $placeholderPrefix . $count . $quote;
+            $minifier->extracted[$placeholder] = $quote . $content . $quote;
 
             return $placeholder;
         };
 
         /*
-         * Quantifier {0,65535} is used instead of *? to avoid exceeding
-         * backtrack limit with large strings. 65535 is the maximum allowed
-         * (see https://www.php.net/manual/en/regexp.reference.repetition.php)
-         * and should be well sufficient for string representations here.
+         * One alternative per quote character, instead of a character class plus
+         * a \1 backreference for the closing quote.
          *
-         * The \\ messiness explained:
-         * * Don't count ' or " as end-of-string if it's escaped (has backslash
-         * in front of it)
-         * * Unless... that backslash itself is escaped (another leading slash),
-         * in which case it's no longer escaping the ' or "
-         * * So there can be either no backslash, or an even number
-         * * multiply all of that times 4, to account for the escaping that has
-         * to be done to pass the backslash into the PHP string without it being
-         * considered as escape-char (times 2) and to get it in the regex,
-         * escaped (times 2)
+         * Spelling the delimiter out per alternative means the content can be
+         * matched with a negated character class rather than a lazy `.`:
+         * everything that is neither the quote nor a backslash is consumed in one
+         * possessive step, and an escaped character (`\"`, or `\\` so a backslash
+         * can never end up escaping the closing quote) is consumed as a unit.
+         *
+         * Nothing in there can backtrack, which is what the previous pattern
+         * needed its {0,65535} bound for - to stay inside pcre.backtrack_limit.
+         * That bound also imposed a 64KB ceiling: a longer string simply didn't
+         * match at its opening quote, so the next match started at its *closing*
+         * quote instead, pairing up the wrong quotes & leaving the real string
+         * content to be treated as code (whitespace collapsed, `//` taken for the
+         * start of a comment). This has neither problem, and no length limit.
+         *
+         * The alternatives are wrapped in a branch reset group - (?|, PCRE 7.2+,
+         * as already required by the \K used elsewhere - so that all of them
+         * share group number 1, and this stays a single pattern. Registering one
+         * pattern per quote character would work too, but replace() would then
+         * run a separate match for each of them on every pass.
          */
+        $branches = array();
+        $length = strlen($chars);
+        for ($i = 0; $i < $length; ++$i) {
+            $quote = preg_quote($chars[$i], '/');
+            $branches[] = $quote
+                . '((?>[^' . $quote . '\\\\]*+(?:\\\\.[^' . $quote . '\\\\]*+)*+))'
+                . $quote;
+        }
 
-        $this->registerPattern('/([' . $chars . '])(.{0,65535}?(?<!\\\\)(\\\\\\\\)*+)\\1/s', $callback);
+        $this->registerPattern('/(?|' . implode('|', $branches) . ')/s', $callback);
     }
 
     /**
@@ -550,12 +608,22 @@ abstract class Minify
      */
     protected function writeToFile($handler, $content, $path = '')
     {
-        if (
-            !is_resource($handler)
-            || ($result = @fwrite($handler, $content)) === false
-            || ($result < strlen($content))
-        ) {
+        if (!is_resource($handler)) {
             throw new IOException('The file "' . $path . '" could not be written to. Check your disk space and file permissions.');
+        }
+
+        /*
+         * fwrite() is allowed to write less than it was given, so a short write
+         * is not in itself an error: keep going until everything has been
+         * written. A write of 0 bytes does mean we're not making progress
+         * anymore, though, so bail out instead of looping forever.
+         */
+        $length = strlen($content);
+        for ($written = 0; $written < $length; $written += $result) {
+            $result = @fwrite($handler, substr($content, $written));
+            if ($result === false || $result === 0) {
+                throw new IOException('The file "' . $path . '" could not be written to. Check your disk space and file permissions.');
+            }
         }
     }
 

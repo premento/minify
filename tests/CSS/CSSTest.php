@@ -79,6 +79,130 @@ class CSSTest extends CompatTestCase
     }
 
     /**
+     * A file importing another file that was added as a source in its own right
+     * is not a circular reference.
+     *
+     * The import chain used to be tracked in a variable that was reused across
+     * sources, so the first file ended up in the second file's chain.
+     */
+    public function testMultipleSourcesWithImport()
+    {
+        $first = __DIR__ . '/sample/multiple_sources/first.css';
+        $second = __DIR__ . '/sample/multiple_sources/second.css';
+
+        $minifier = $this->getMinifier();
+        $minifier->add($first);
+        $minifier->add($second);
+
+        // first.css appears twice: once as a source, once via second.css's import
+        $this->assertEquals('body{color:red}body{color:red}p{color:blue}', $minifier->minify());
+    }
+
+    /**
+     * The order in which sources are added must not matter either.
+     */
+    public function testMultipleSourcesWithImportReversed()
+    {
+        $first = __DIR__ . '/sample/multiple_sources/first.css';
+        $second = __DIR__ . '/sample/multiple_sources/second.css';
+
+        $minifier = $this->getMinifier();
+        $minifier->add($second);
+        $minifier->add($first);
+
+        $this->assertEquals('body{color:red}p{color:blue}body{color:red}', $minifier->minify());
+    }
+
+    /**
+     * Minifying twice must give the same result twice, and must not leave a
+     * growing pile of registered patterns behind.
+     */
+    public function testRepeatedMinify()
+    {
+        $minifier = $this->getMinifier();
+        $minifier->add("body {\n  color: red;\n}");
+
+        $object = new \ReflectionObject($minifier);
+        $property = $object->getProperty('patterns');
+        $property->setAccessible(true);
+
+        $first = $minifier->minify();
+        $patternsAfterFirst = count($property->getValue($minifier));
+
+        $second = $minifier->minify();
+        $patternsAfterSecond = count($property->getValue($minifier));
+
+        $this->assertEquals('body{color:red}', $first);
+        $this->assertEquals($first, $second);
+        $this->assertEquals($patternsAfterFirst, $patternsAfterSecond);
+    }
+
+    /**
+     * Patterns are registered per source, so they must not accumulate as more
+     * sources are added.
+     */
+    public function testPatternsDoNotAccumulatePerSource()
+    {
+        $minifier = $this->getMinifier();
+        for ($i = 0; $i < 5; ++$i) {
+            $minifier->add('.c' . $i . ' { color: red; }');
+        }
+        $minifier->minify();
+
+        $object = new \ReflectionObject($minifier);
+        $property = $object->getProperty('patterns');
+        $property->setAccessible(true);
+
+        $single = $this->getMinifier();
+        $single->add('.c0 { color: red; }');
+        $single->minify();
+        $singleProperty = (new \ReflectionObject($single))->getProperty('patterns');
+        $singleProperty->setAccessible(true);
+
+        $this->assertEquals(
+            count($singleProperty->getValue($single)),
+            count($property->getValue($minifier))
+        );
+    }
+
+    /**
+     * Files whose extension isn't in the import list must not be embedded - not
+     * even when they have no extension at all, which used to skip the check
+     * completely & inline any readable file as `url(;base64,...)`.
+     */
+    public function testImportFilesRespectsExtensions()
+    {
+        $minifier = $this->getMinifier();
+        $minifier->add(__DIR__ . '/sample/import_extensions/index.css');
+
+        $result = $minifier->minify();
+
+        $this->assertEquals('body{background:url(secret)}', $result);
+        $this->assertStringNotContainsString('base64', $result);
+    }
+
+    /**
+     * Strings larger than 64KB must survive intact: the extraction pattern used
+     * to be bounded at 65535 characters, above which it matched the wrong pair
+     * of quotes & the string content got minified as if it were code.
+     */
+    public function testStringLargerThan64KB()
+    {
+        // includes whitespace runs & a // sequence, both of which would be
+        // rewritten if the string were not recognised as a string
+        $chunk = 'a   b // not a comment; ';
+        $content = substr(str_repeat($chunk, (int) ceil(70000 / strlen($chunk))), 0, 70000);
+
+        $minifier = $this->getMinifier();
+        $minifier->add('.a::after{content:"' . $content . '"}.b{color:red}');
+
+        $this->assertEquals(
+            '.a::after{content:"' . $content . '"}.b{color:red}',
+            $minifier->minify()
+        );
+    }
+
+    /**
      * Test minifier import configuration methods.
      */
     public function testSetConfig()
@@ -918,6 +1042,72 @@ margin-left: calc(20px + var(--some-var));
         $tests[] = array(
             '.test2 { color: rgb(1.5  ,  2.5, 3.5);  background-color:  rgba(0,0, 0,0)}',
             '.test2{color:rgb(1.5,2.5,3.5);background-color:#fff0}',
+        );
+
+        // consecutive empty rules, the first of which is at the very start: the
+        // second one used to survive, because after removing the first there was
+        // nothing left in front of it to match against
+        $tests[] = array(
+            'a{}b{}',
+            '',
+        );
+        $tests[] = array(
+            'a{}b{}c{color:red}',
+            'c{color:red}',
+        );
+
+        // empty rules nested inside an at-rule, which then empties that too
+        $tests[] = array(
+            '@media screen{a{}}',
+            '',
+        );
+        $tests[] = array(
+            '@media screen{a{}b{color:red}}',
+            '@media screen{b{color:red}}',
+        );
+
+        // colors in multi-value declarations & function arguments: the context
+        // characters around them (`,` and `)`) used to not be recognised
+        $tests[] = array(
+            'p{box-shadow:0 0 0 #ff0000,0 0 0 #00ff00}',
+            'p{box-shadow:0 0 0 red,0 0 0 lime}',
+        );
+        $tests[] = array(
+            'p{background:linear-gradient(to right,#aabbcc,#ddeeff)}',
+            'p{background:linear-gradient(to right,#abc,#def)}',
+        );
+
+        // url() fragment references must never be treated as colors, which is
+        // why `(` is not accepted in front of one
+        $tests[] = array(
+            'div{clip-path:url(#aabbcc)}',
+            'div{clip-path:url(#aabbcc)}',
+        );
+
+        // the / in a modern color needs no whitespace around it
+        $tests[] = array(
+            'p{color:rgb(255 0 0/1)}',
+            'p{color:rgb(255 0 0)}',
+        );
+        $tests[] = array(
+            'p{color:rgb(1 2 3/0)}',
+            'p{color:#fff0}',
+        );
+
+        // properties taking an author-defined identifier: a value that merely
+        // looks like a color name is not one
+        $tests[] = array(
+            'p{grid-area:white}',
+            'p{grid-area:white}',
+        );
+        $tests[] = array(
+            'p{animation-name:black}',
+            'p{animation-name:black}',
+        );
+        // ... while an actual color still gets shortened
+        $tests[] = array(
+            'p{color:white}',
+            'p{color:#fff}',
         );
 
         return $tests;

@@ -42,6 +42,26 @@ class JSTest extends CompatTestCase
     }
 
     /**
+     * Strings larger than 64KB must survive intact: the extraction pattern used
+     * to be bounded at 65535 characters, above which it matched the wrong pair
+     * of quotes, so the string content was treated as code - the `//` inside it
+     * became a comment & swallowed the rest of the file.
+     */
+    public function testStringLargerThan64KB()
+    {
+        $chunk = 'a   b // not a comment; ';
+        $content = substr(str_repeat($chunk, (int) ceil(70000 / strlen($chunk))), 0, 70000);
+
+        $minifier = $this->getMinifier();
+        $minifier->add('var s = "' . $content . '"; var after = 1;');
+
+        $this->assertEquals(
+            'var s="' . $content . '";var after=1',
+            $minifier->minify()
+        );
+    }
+
+    /**
      * Test JS minifier rules, provided by dataProvider.
      *
      * @dataProvider dataProvider
@@ -1377,6 +1397,51 @@ b=2',
         $tests[] = array(
             'f=void 0===m?/ +/g:m',
             'f=void 0===m?/ +/g:m',
+        );
+
+        /*
+         * `true`/`false` used as a property name must be left alone, including
+         * when whitespace separates it from its `:` - the guard used to only
+         * look for a colon immediately after, so these produced `{!0:1}`, which
+         * isn't even valid JavaScript.
+         */
+        $tests[] = array(
+            'e = { true : 1 }',
+            'e={true:1}',
+        );
+        $tests[] = array(
+            'e = {a:1, false : 2}',
+            'e={a:1,false:2}',
+        );
+        $tests[] = array(
+            "e = {\n  true : 1\n}",
+            'e={true:1}',
+        );
+
+        // in a ternary, the exact same `true :` *can* be shortened, because
+        // there it's a value rather than a property name
+        $tests[] = array(
+            'x = a ? true : b',
+            'x=a?!0:b',
+        );
+        $tests[] = array(
+            'x = a?true:b',
+            'x=a?!0:b',
+        );
+
+        /*
+         * Property notation on a variable whose name merely ends in a reserved
+         * word: the keyword assertions had no word boundaries, so the `in` at
+         * the end of `main` made this one get skipped.
+         */
+        $tests[] = array(
+            "x = main['message']",
+            'x=main.message',
+        );
+        // ... but a real keyword is still not converted
+        $tests[] = array(
+            "x = in['message']",
+            "x=in['message']",
         );
 
         // known minified files to help doublecheck changes in places not yet

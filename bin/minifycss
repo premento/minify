@@ -4,12 +4,28 @@ use MatthiasMullie\Minify;
 
 // command line utility to minify CSS
 if (file_exists(__DIR__ . '/../../../autoload.php')) {
-    // if composer install
+    // if installed as a dependency (vendor/matthiasmullie/minify/bin)
     require_once __DIR__ . '/../../../autoload.php';
+} elseif (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    // if installed standalone (git clone + composer install)
+    require_once __DIR__ . '/../vendor/autoload.php';
 } else {
+    // no autoloader available: load the library by hand. Parents must be
+    // loaded before their children, since there's nothing to autoload them.
+    require_once __DIR__ . '/../src/Exception.php';
+    require_once __DIR__ . '/../src/Exceptions/BasicException.php';
+    require_once __DIR__ . '/../src/Exceptions/IOException.php';
+    require_once __DIR__ . '/../src/Exceptions/FileImportException.php';
+    require_once __DIR__ . '/../src/Exceptions/PatternMatchException.php';
     require_once __DIR__ . '/../src/Minify.php';
     require_once __DIR__ . '/../src/CSS.php';
-    require_once __DIR__ . '/../src/Exception.php';
+
+    // CSS relies on matthiasmullie/path-converter, which we can't load without
+    // an autoloader; fail with something more helpful than "class not found"
+    if (!class_exists('MatthiasMullie\\PathConverter\\Converter')) {
+        fwrite(STDERR, 'Missing dependency matthiasmullie/path-converter; please run "composer install".' . PHP_EOL);
+        exit(1);
+    }
 }
 
 error_reporting(E_ALL);
@@ -27,7 +43,7 @@ if (!isset($argv[1])) {
 }
 // check if script run in cli environment
 if ('cli' !== php_sapi_name()) {
-    fwrite(STDERR, $argv[1] . ' must be run in the command line' . PHP_EOL);
+    fwrite(STDERR, $argv[0] . ' must be run in the command line' . PHP_EOL);
     exit(1);
 }
 // check if source file exists
@@ -39,7 +55,7 @@ if (!file_exists($argv[1])) {
 try {
     $minifier = new Minify\CSS($argv[1]);
     echo $minifier->minify();
-} catch (Exception $e) {
-    fwrite(STDERR, $e->getMessage(), PHP_EOL);
+} catch (\Exception $e) {
+    fwrite(STDERR, $e->getMessage() . PHP_EOL);
     exit(1);
 }

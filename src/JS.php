@@ -12,6 +12,8 @@
 
 namespace MatthiasMullie\Minify;
 
+use MatthiasMullie\Minify\Exceptions\IOException;
+
 /**
  * JavaScript Minifier Class.
  *
@@ -122,18 +124,91 @@ class JS extends Minify
      */
     protected $operatorsAfter = array();
 
+    /**
+     * The keyword & operator lists from /data/js, which are the same for every
+     * instance: no point in re-reading 6 files every time one is constructed.
+     *
+     * @var array[]|null
+     */
+    private static $dataCache;
+
+    /**
+     * Escaped keyword & operator lists, as used to build the regexes in
+     * stripWhitespace(). Derived from the (constant) lists above, so they only
+     * need to be built once per instance instead of once per source file.
+     *
+     * @var array[]|null
+     */
+    private $regexCache;
+
+    /**
+     * @throws IOException
+     */
     public function __construct()
     {
-        call_user_func_array(array('\\MatthiasMullie\Minify\\Minify', '__construct'), func_get_args());
+        parent::__construct();
+
+        /*
+         * Forward any constructor arguments the same way the parent constructor
+         * does. They can't just be handed to parent::__construct() as-is: this
+         * library still supports PHP versions without argument unpacking.
+         */
+        $args = func_get_args();
+        if ($args) {
+            call_user_func_array(array($this, 'add'), $args);
+        }
+
+        $data = self::loadData();
+        $this->keywordsReserved = $data['keywords_reserved'];
+        $this->keywordsBefore = $data['keywords_before'];
+        $this->keywordsAfter = $data['keywords_after'];
+        $this->operators = $data['operators'];
+        $this->operatorsBefore = $data['operators_before'];
+        $this->operatorsAfter = $data['operators_after'];
+    }
+
+    /**
+     * Read the keyword & operator lists that ship with this library, once.
+     *
+     * @return array[]
+     *
+     * @throws IOException
+     */
+    private static function loadData()
+    {
+        if (self::$dataCache !== null) {
+            return self::$dataCache;
+        }
 
         $dataDir = __DIR__ . '/../data/js/';
         $options = FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES;
-        $this->keywordsReserved = file($dataDir . 'keywords_reserved.txt', $options);
-        $this->keywordsBefore = file($dataDir . 'keywords_before.txt', $options);
-        $this->keywordsAfter = file($dataDir . 'keywords_after.txt', $options);
-        $this->operators = file($dataDir . 'operators.txt', $options);
-        $this->operatorsBefore = file($dataDir . 'operators_before.txt', $options);
-        $this->operatorsAfter = file($dataDir . 'operators_after.txt', $options);
+        $names = array(
+            'keywords_reserved',
+            'keywords_before',
+            'keywords_after',
+            'operators',
+            'operators_before',
+            'operators_after',
+        );
+
+        $data = array();
+        foreach ($names as $name) {
+            $path = $dataDir . $name . '.txt';
+            $lines = @file($path, $options);
+            /*
+             * file() returns false when it fails. Without this check the
+             * properties would silently be set to a non-array & only blow up
+             * much later, halfway through building a regular expression.
+             */
+            if ($lines === false) {
+                throw new IOException('The file "' . $path . '" could not be read; this installation of matthiasmullie/minify looks incomplete.');
+            }
+            $data[$name] = $lines;
+        }
+
+        self::$dataCache = $data;
+
+        return $data;
     }
 
     /**
@@ -147,6 +222,10 @@ class JS extends Minify
     public function execute($path = null)
     {
         $content = '';
+
+        // drop patterns registered by an earlier execute() call on this same
+        // instance; re-registering them would just duplicate the work
+        $this->reset();
 
         /*
          * Let's first take out strings, comments and regular expressions.
@@ -321,11 +400,27 @@ class JS extends Minify
         // collapse consecutive line feeds into just 1
         $content = preg_replace('/\n+/', "\n", $content);
 
-        $operatorsBefore = $this->getOperatorsForRegex($this->operatorsBefore, '/');
-        $operatorsAfter = $this->getOperatorsForRegex($this->operatorsAfter, '/');
-        $operators = $this->getOperatorsForRegex($this->operators, '/');
-        $keywordsBefore = $this->getKeywordsForRegex($this->keywordsBefore, '/');
-        $keywordsAfter = $this->getKeywordsForRegex($this->keywordsAfter, '/');
+        /*
+         * These are derived from constant lists, so build them once & reuse
+         * them: this method runs once per source file, and preg_quote-ing every
+         * keyword & operator each time adds up. The arrays are copied out of the
+         * cache, so the unset() below doesn't affect it.
+         */
+        if ($this->regexCache === null) {
+            $this->regexCache = array(
+                'operatorsBefore' => $this->getOperatorsForRegex($this->operatorsBefore, '/'),
+                'operatorsAfter' => $this->getOperatorsForRegex($this->operatorsAfter, '/'),
+                'operators' => $this->getOperatorsForRegex($this->operators, '/'),
+                'keywordsBefore' => $this->getKeywordsForRegex($this->keywordsBefore, '/'),
+                'keywordsAfter' => $this->getKeywordsForRegex($this->keywordsAfter, '/'),
+            );
+        }
+
+        $operatorsBefore = $this->regexCache['operatorsBefore'];
+        $operatorsAfter = $this->regexCache['operatorsAfter'];
+        $operators = $this->regexCache['operators'];
+        $keywordsBefore = $this->regexCache['keywordsBefore'];
+        $keywordsAfter = $this->regexCache['keywordsAfter'];
 
         // strip whitespace that ends in (or next line begin with) an operator
         // that allows statements to be broken up over multiple lines
@@ -491,14 +586,23 @@ class JS extends Minify
         $delimiter = array_fill(0, count($keywords), $delimiter);
         $escaped = array_map('preg_quote', $keywords, $delimiter);
 
-        // add word boundaries
-        array_walk($keywords, function ($value) {
-            return '\b' . $value . '\b';
-        });
+        /*
+         * Add word boundaries, so these only match complete words. Callers use
+         * the *values* of this array to build their patterns, so that's where
+         * the boundaries have to go. (This used to array_walk over $keywords
+         * with a by-value callback whose return value went nowhere, so the
+         * boundaries were never applied to anything at all - and the keys it
+         * meant to change aren't used by any caller either.)
+         *
+         * Without them, propertyNotation()'s `(?<!keyword)` assertions match
+         * the tail of longer identifiers, e.g. the `in` at the end of `main`,
+         * so `main['0']` was never converted to `main.0`.
+         */
+        $escaped = array_map(function ($keyword) {
+            return '\b' . $keyword . '\b';
+        }, $escaped);
 
-        $keywords = array_combine($keywords, $escaped);
-
-        return $keywords;
+        return array_combine($keywords, $escaped);
     }
 
     /**
@@ -577,13 +681,30 @@ class JS extends Minify
          * character and check if it's a `.`
          */
         $callback = function ($match) {
-            if (trim($match[1]) === '.') {
+            $before = trim($match[1]);
+            // trailing optional group may simply be absent from the match
+            $colon = isset($match[3]) ? $match[3] : '';
+
+            // property access (`x.true`) must be left alone
+            if ($before === '.') {
                 return $match[0];
             }
 
-            return $match[1] . ($match[2] === 'true' ? '!0' : '!1');
+            /*
+             * A `true` followed by a `:` is either a property name, which must
+             * be left alone, or the middle of a ternary, which may be shortened.
+             * Both look identical from here, so go by what precedes it: property
+             * names follow the `{` opening the object, or the `,` after an
+             * earlier property. Note the `:` may be separated by whitespace -
+             * this runs before whitespace is stripped.
+             */
+            if ($colon !== '' && ($before === '{' || $before === ',')) {
+                return $match[0];
+            }
+
+            return $match[1] . ($match[2] === 'true' ? '!0' : '!1') . $colon;
         };
-        $content = preg_replace_callback('/(^|.\s*)\b(true|false)\b(?!:)/', $callback, $content);
+        $content = preg_replace_callback('/(^|.\s*)\b(true|false)\b(\s*:)?/', $callback, $content);
 
         // for(;;) is exactly the same as while(true), but shorter :)
         $content = preg_replace('/\bwhile\(!0\){/', 'for(;;){', $content);

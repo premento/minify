@@ -260,8 +260,27 @@ class CSS extends Minify
 
             // loop the matches
             foreach ($matches as $match) {
-                $extension = substr(strrchr($match[2], '.'), 1);
-                if ($extension && !array_key_exists($extension, $this->importExtensions)) {
+                /*
+                 * Don't touch absolute paths, other hosts, or data: uris.
+                 * combineImports() & move() already apply this same rule; this
+                 * method used to be the only one that didn't.
+                 */
+                if (!$this->canImportByPath($match[2])) {
+                    continue;
+                }
+
+                /*
+                 * Only import files whose extension maps to a known data type:
+                 * without one, there is no data: uri to build.
+                 * Note the explicit array_key_exists on its own: an url without
+                 * any extension yields an empty $extension, and the previous
+                 * `$extension && !array_key_exists(...)` skipped the allow-list
+                 * altogether for those, so any readable file small enough got
+                 * inlined - as `url(;base64,...)`, which isn't even valid CSS.
+                 */
+                $extension = strrchr($match[2], '.');
+                $extension = $extension === false ? '' : substr($extension, 1);
+                if (!array_key_exists($extension, $this->importExtensions)) {
                     continue;
                 }
 
@@ -306,6 +325,11 @@ class CSS extends Minify
 
         // loop CSS data (raw data and files)
         foreach ($this->data as $source => $css) {
+            // patterns are registered per source below; drop the ones that were
+            // registered for the previous source (or a previous execute() call)
+            // so they don't pile up & get executed over and over again
+            $this->reset();
+
             /*
              * Let's first take out strings & comments, since we can't just
              * remove whitespace anywhere. If whitespace occurs inside a string,
@@ -321,7 +345,7 @@ class CSS extends Minify
             $css = $this->stripWhitespace($css);
             $css = $this->convertLegacyColors($css);
             $css = $this->cleanupModernColors($css);
-            $css = $this->shortenHEXColors($css);
+            $css = $this->shortenHexColors($css);
             $css = $this->shortenZeroes($css);
             $css = $this->shortenFontWeights($css);
             $css = $this->stripEmptyTags($css);
@@ -330,8 +354,14 @@ class CSS extends Minify
             $css = $this->restoreExtractedData($css);
 
             $source = is_int($source) ? '' : $source;
-            $parents = $source ? array_merge($parents, array($source)) : $parents;
-            $css = $this->combineImports($source, $css, $parents);
+            /*
+             * Note the local variable: the import chain is per source. Adding to
+             * $parents itself would leak this source into the chain of every
+             * later source, so a second file legitimately importing the first
+             * would be reported as a circular reference.
+             */
+            $fileParents = $source ? array_merge($parents, array($source)) : $parents;
+            $css = $this->combineImports($source, $css, $fileParents);
             $css = $this->importFiles($source, $css);
 
             /*
@@ -495,15 +525,32 @@ class CSS extends Minify
      */
     protected function shortenHexColors($content)
     {
+        /*
+         * A color value can be preceded by the `:` that starts the declaration,
+         * by whitespace, or by the `,` separating it from an earlier value; it
+         * can be followed by the end of the declaration (`;`, `}` or end of
+         * content), by whitespace, or by `,`/`)` when it is part of a list or a
+         * function argument. Without `,` and `)` here, colors in multi-value
+         * declarations (`box-shadow`, gradients, ...) were never shortened.
+         *
+         * `(` is deliberately NOT accepted before a color: it would also match
+         * url() fragment references such as `clip-path:url(#aabbcc)`, where
+         * rewriting the "color" would break the reference. As a result, a color
+         * that comes first inside a function - `linear-gradient(#aabbcc,red)` -
+         * is still skipped.
+         */
+        $before = '(?<=[:, ])';
+        $after = '(?=[;,) }]|$)';
+
         // shorten repeating patterns within HEX ..
-        $content = preg_replace('/(?<=[: ])#([0-9a-f])\\1([0-9a-f])\\2([0-9a-f])\\3(?:([0-9a-f])\\4)?(?=[; }])/i', '#$1$2$3$4', $content);
+        $content = preg_replace('/' . $before . '#([0-9a-f])\\1([0-9a-f])\\2([0-9a-f])\\3(?:([0-9a-f])\\4)?' . $after . '/i', '#$1$2$3$4', $content);
 
         // remove alpha channel if it's pointless ..
-        $content = preg_replace('/(?<=[: ])#([0-9a-f]{6})ff(?=[; }])/i', '#$1', $content);
-        $content = preg_replace('/(?<=[: ])#([0-9a-f]{3})f(?=[; }])/i', '#$1', $content);
+        $content = preg_replace('/' . $before . '#([0-9a-f]{6})ff' . $after . '/i', '#$1', $content);
+        $content = preg_replace('/' . $before . '#([0-9a-f]{3})f' . $after . '/i', '#$1', $content);
 
         // replace `transparent` with shortcut ..
-        $content = preg_replace('/(?<=[: ])#[0-9a-f]{6}00(?=[; }])/i', '#fff0', $content);
+        $content = preg_replace('/' . $before . '#[0-9a-f]{6}00' . $after . '/i', '#fff0', $content);
 
         $colors = array(
             // make these more readable
@@ -549,7 +596,16 @@ class CSS extends Minify
             '#ff6347' => 'tomato',
             '#ee82ee' => 'violet',
             '#f5deb3' => 'wheat',
-            // or the other way around
+        );
+
+        /*
+         * The other way around. Kept separate because a color *name* can also be
+         * an author-defined identifier, so only these need the guard below - and
+         * building one big alternation of everything, prefixed with a lookbehind
+         * per guarded property, would make the common case a lot more expensive
+         * for no reason.
+         */
+        $names = array(
             'black' => '#000',
             'fuchsia' => '#f0f',
             'magenta' => '#f0f',
@@ -559,13 +615,75 @@ class CSS extends Minify
             'transparent' => '#fff0',
         );
 
+        /*
+         * A single pass over both directions. The hex values go in as plain
+         * alternatives - a hex value is never an author-defined identifier, so
+         * they need no guarding - while the color names are grouped behind the
+         * lookbehinds, which the engine then only has to evaluate when it gets
+         * as far as trying that branch.
+         */
+        $alternatives = array_keys($colors);
+        $alternatives[] = self::notCustomIdentProperty()
+            . '(?:' . implode('|', array_keys($names)) . ')';
+        $replacements = array_merge($colors, $names);
+
         return preg_replace_callback(
-            '/(?<=[: ])(' . implode('|', array_keys($colors)) . ')(?=[; }])/i',
-            function ($match) use ($colors) {
-                return $colors[strtolower($match[0])];
+            '/' . $before . '(' . implode('|', $alternatives) . ')' . $after . '/i',
+            function ($match) use ($replacements) {
+                // the lookbehinds are zero-width, so this is just the color token
+                return $replacements[strtolower($match[0])];
             },
             $content
         );
+    }
+
+    /**
+     * Lookbehind assertions rejecting the properties that take an author-defined
+     * identifier rather than a color, so a value that merely looks like a color
+     * name is left alone there: `grid-area:white` refers to a named grid area, &
+     * turning it into `grid-area:#fff` breaks the rule.
+     *
+     * Note this only guards the *first* value of such a declaration, because a
+     * lookbehind can't reach back over preceding values - `grid-area:a / white`
+     * is still shortened. Covering that needs declaration-level parsing.
+     *
+     * @return string
+     */
+    protected static function notCustomIdentProperty()
+    {
+        static $pattern;
+
+        if ($pattern === null) {
+            $properties = array(
+                'animation',
+                'animation-name',
+                'container',
+                'container-name',
+                'counter-increment',
+                'counter-reset',
+                'counter-set',
+                'grid-area',
+                'grid-column',
+                'grid-column-end',
+                'grid-column-start',
+                'grid-row',
+                'grid-row-end',
+                'grid-row-start',
+                'page',
+                'transition-property',
+                'view-transition-name',
+                'will-change',
+            );
+
+            $pattern = '';
+            foreach ($properties as $property) {
+                // whitespace around the `:` has been stripped by now, so each of
+                // these is a fixed-length lookbehind
+                $pattern .= '(?<!' . $property . ':)';
+            }
+        }
+
+        return $pattern;
     }
 
     /**
@@ -625,10 +743,12 @@ class CSS extends Minify
         $tag = '(rgb|hsl|hwb|(?:(?:ok)?(?:lch|lab)))';
 
         // remove alpha channel if it's pointless ..
-        $content = preg_replace('/' . $tag . '\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)]+)\s+\/\s+1(?:(?:\.\d?)*|00%)?\s*\)/i', '$1($2 $3 $4)', $content);
+        // (\s* around the //: the slash needs no whitespace around it, so
+        // `rgb(255 0 0/1)` is just as valid as `rgb(255 0 0 / 1)`)
+        $content = preg_replace('/' . $tag . '\(\s*([^\s\/)]+)\s+([^\s\/)]+)\s+([^\s\/)]+)\s*\/\s*1(?:(?:\.\d?)*|00%)?\s*\)/i', '$1($2 $3 $4)', $content);
 
         // replace `transparent` with shortcut ..
-        $content = preg_replace('/' . $tag . '\(\s*[^\s)]+\s+[^\s)]+\s+[^\s)]+\s+\/\s+0(?:[\.0%]*)?\s*\)/i', '#fff0', $content);
+        $content = preg_replace('/' . $tag . '\(\s*[^\s\/)]+\s+[^\s\/)]+\s+[^\s\/)]+\s*\/\s*0(?:[\.0%]*)?\s*\)/i', '#fff0', $content);
 
         return $content;
     }
@@ -716,8 +836,21 @@ class CSS extends Minify
      */
     protected function stripEmptyTags($content)
     {
-        $content = preg_replace('/(?<=^)[^\{\};]+\{\s*\}/', '', $content);
-        $content = preg_replace('/(?<=(\}|;))[^\{\};]+\{\s*\}/', '', $content);
+        /*
+         * One pattern rather than one for the start of the content & one for
+         * after a } or ;: as two separate passes, the second pass runs on the
+         * output of the first, so `a{}b{}` would keep `b{}` (once `a{}` is gone,
+         * `b{}` is no longer preceded by anything.) Lookbehind alternatives may
+         * differ in length, as long as each one is itself fixed-length.
+         *
+         * `{` is in there too, so empty rules nested inside an at-rule (like
+         * `@media screen{a{}}`) are also matched. Emptying those can leave the
+         * at-rule itself empty, so repeat until nothing changes anymore.
+         */
+        do {
+            $previous = $content;
+            $content = $this->pregReplace('/(?<=^|\{|\}|;)[^\{\};]+\{\s*\}/', '', $content);
+        } while ($content !== $previous);
 
         return $content;
     }
