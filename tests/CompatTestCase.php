@@ -1,6 +1,6 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests;
+namespace Premento\Minify\Tests;
 
 use PHPUnit\Framework\TestCase as PHPUnitTestCase;
 

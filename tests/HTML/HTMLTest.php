@@ -1,8 +1,8 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests\HTML;
+namespace Premento\Minify\Tests\HTML;
 
-use MatthiasMullie\Minify\Tests\CompatTestCase;
+use Premento\Minify\Tests\CompatTestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**

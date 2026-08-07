@@ -42,12 +42,12 @@
     },
     "autoload": {
         "psr-4": {
-            "MatthiasMullie\\Minify\\": "src/"
+            "Premento\\Minify\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "MatthiasMullie\\Minify\\Tests\\": "tests/"
+            "Premento\\Minify\\Tests\\": "tests/"
         }
     },
     "bin": [

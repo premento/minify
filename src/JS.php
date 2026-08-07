@@ -10,9 +10,9 @@
  * @license MIT License
  */
 
-namespace MatthiasMullie\Minify;
+namespace Premento\Minify;
 
-use MatthiasMullie\Minify\Exceptions\IOException;
+use Premento\Minify\Exceptions\IOException;
 
 /**
  * JavaScript Minifier Class.

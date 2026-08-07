@@ -1,11 +1,11 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests\JS;
+namespace Premento\Minify\Tests\JS;
 
-use MatthiasMullie\Minify;
-use MatthiasMullie\Minify\Tests\CompatTestCase;
-use MatthiasMullie\Scrapbook\Adapters\MemoryStore;
-use MatthiasMullie\Scrapbook\Psr6\Pool;
+use Premento\Minify;
+use Premento\Minify\Tests\CompatTestCase;
+use Premento\Scrapbook\Adapters\MemoryStore;
+use Premento\Scrapbook\Psr6\Pool;
 
 /**
  * Tests common functions of abstract Minify class by using JS implementation.
@@ -171,7 +171,7 @@ class AbstractTest extends CompatTestCase
 
     public function testCheckFileOpenFail()
     {
-        $this->expectException('MatthiasMullie\Minify\Exceptions\IOException');
+        $this->expectException('Premento\Minify\Exceptions\IOException');
 
         $minifier = new Minify\JS();
         $wrongPath = '';
@@ -185,7 +185,7 @@ class AbstractTest extends CompatTestCase
 
     public function testCheckFileWriteFail()
     {
-        $this->expectException('MatthiasMullie\Minify\Exceptions\IOException');
+        $this->expectException('Premento\Minify\Exceptions\IOException');
 
         $minifier = new Minify\JS();
         $wrongPath = '';

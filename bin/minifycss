@@ -1,6 +1,6 @@
 #!/usr/bin/env php
 <?php
-use MatthiasMullie\Minify;
+use Premento\Minify;
 
 // command line utility to minify CSS
 if (file_exists(__DIR__ . '/../../../autoload.php')) {
@@ -22,7 +22,7 @@ if (file_exists(__DIR__ . '/../../../autoload.php')) {
 
     // CSS relies on matthiasmullie/path-converter, which we can't load without
     // an autoloader; fail with something more helpful than "class not found"
-    if (!class_exists('MatthiasMullie\\PathConverter\\Converter')) {
+    if (!class_exists('Premento\\PathConverter\\Converter')) {
         fwrite(STDERR, 'Missing dependency matthiasmullie/path-converter; please run "composer install".' . PHP_EOL);
         exit(1);
     }

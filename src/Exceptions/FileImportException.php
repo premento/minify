@@ -10,7 +10,7 @@
  * @license MIT License
  */
 
-namespace MatthiasMullie\Minify\Exceptions;
+namespace Premento\Minify\Exceptions;
 
 /**
  * File Import Exception Class.

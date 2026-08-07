@@ -1,8 +1,8 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests\JS;
+namespace Premento\Minify\Tests\JS;
 
-use MatthiasMullie\Minify\JS;
+use Premento\Minify\JS;
 
 class NoSaveJS extends JS
 {

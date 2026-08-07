@@ -10,9 +10,9 @@
  * @license MIT License
  */
 
-namespace MatthiasMullie\Minify\Exceptions;
+namespace Premento\Minify\Exceptions;
 
-use MatthiasMullie\Minify\Exception;
+use Premento\Minify\Exception;
 
 /**
  * Basic Exception Class.

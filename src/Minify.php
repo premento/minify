@@ -10,10 +10,10 @@
  * @license MIT License
  */
 
-namespace MatthiasMullie\Minify;
+namespace Premento\Minify;
 
-use MatthiasMullie\Minify\Exceptions\IOException;
-use MatthiasMullie\Minify\Exceptions\PatternMatchException;
+use Premento\Minify\Exceptions\IOException;
+use Premento\Minify\Exceptions\PatternMatchException;
 use Psr\Cache\CacheItemInterface;
 
 /**

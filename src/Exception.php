@@ -8,7 +8,7 @@
  * @author Matthias Mullie <minify@mullie.eu>
  */
 
-namespace MatthiasMullie\Minify;
+namespace Premento\Minify;
 
 /**
  * Base Exception Class.

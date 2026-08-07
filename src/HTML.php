@@ -10,7 +10,7 @@
  * @license MIT License
  */
 
-namespace MatthiasMullie\Minify;
+namespace Premento\Minify;
 
 /**
  * HTML minifier.

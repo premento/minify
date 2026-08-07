@@ -10,12 +10,12 @@
  * @license MIT License
  */
 
-namespace MatthiasMullie\Minify;
+namespace Premento\Minify;
 
-use MatthiasMullie\Minify\Exceptions\FileImportException;
-use MatthiasMullie\Minify\Exceptions\PatternMatchException;
-use MatthiasMullie\PathConverter\Converter;
-use MatthiasMullie\PathConverter\ConverterInterface;
+use Premento\Minify\Exceptions\FileImportException;
+use Premento\Minify\Exceptions\PatternMatchException;
+use Premento\PathConverter\Converter;
+use Premento\PathConverter\ConverterInterface;
 
 /**
  * CSS minifier.

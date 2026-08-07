@@ -35,7 +35,7 @@ And it comes with a huge test suite.
 ### CSS
 
 ```php
-use MatthiasMullie\Minify;
+use Premento\Minify;
 
 $sourcePath = '/path/to/source/css/file.css';
 $minifier = new Minify\CSS($sourcePath);
@@ -66,7 +66,7 @@ echo $minifier->minify();
 ### HTML
 
 ```php
-use MatthiasMullie\Minify;
+use Premento\Minify;
 
 $minifier = new Minify\HTML($sourcePath);
 
@@ -116,7 +116,7 @@ The object constructor accepts 0, 1 or multiple paths of files, or even complete
 All CSS/JS passed along, will be combined into 1 minified file.
 
 ```php
-use MatthiasMullie\Minify;
+use Premento\Minify;
 $minifier = new Minify\JS($path1, $path2);
 ```
 

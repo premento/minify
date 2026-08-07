@@ -1,8 +1,8 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests\CSS;
+namespace Premento\Minify\Tests\CSS;
 
-use MatthiasMullie\Minify\CSS;
+use Premento\Minify\CSS;
 
 class NoSaveCSS extends CSS
 {

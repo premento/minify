@@ -1,8 +1,8 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests\CSS;
+namespace Premento\Minify\Tests\CSS;
 
-use MatthiasMullie\Minify\Tests\CompatTestCase;
+use Premento\Minify\Tests\CompatTestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
@@ -68,7 +68,7 @@ class CSSTest extends CompatTestCase
      */
     public function testFileImportLoop()
     {
-        $this->expectException('MatthiasMullie\Minify\Exceptions\FileImportException');
+        $this->expectException('Premento\Minify\Exceptions\FileImportException');
 
         $testFile = __DIR__ . '/sample/loop/first.css';
 
@@ -246,7 +246,7 @@ class CSSTest extends CompatTestCase
 
         $minifier = $this->getMinifier();
         $minifier->add($src);
-        $this->expectException('MatthiasMullie\Minify\Exceptions\PatternMatchException');
+        $this->expectException('Premento\Minify\Exceptions\PatternMatchException');
         $minifier->minify();
     }
 

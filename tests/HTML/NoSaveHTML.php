@@ -1,8 +1,8 @@
 <?php
 
-namespace MatthiasMullie\Minify\Tests\HTML;
+namespace Premento\Minify\Tests\HTML;
 
-use MatthiasMullie\Minify\HTML;
+use Premento\Minify\HTML;
 
 class NoSaveHTML extends HTML
 {
