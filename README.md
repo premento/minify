@@ -80,12 +80,30 @@ echo $minifier->minify();
 Whitespace in HTML is not like whitespace in CSS or JS: the space between two
 inline elements is rendered, so removing it changes the page. This minifier is
 therefore conservative by default - it collapses runs of whitespace into a
-single space, and only removes it completely next to block-level elements,
-where a browser couldn't have rendered it anyway. `<pre>` and `<textarea>`
-content is left exactly as it was.
+single space, and only removes it completely next to block-level elements.
+`<pre>` and `<textarea>` content is left exactly as it was.
 
-See [setAggressiveWhitespace()](#setaggressivewhitespaceaggressive-html-only)
-if you want to trade that safety for a few more bytes.
+**One caveat worth knowing:** which elements count as block-level is decided
+from each element's *default* display, because that is all the markup tells us.
+CSS can change it, and then the minifier's assumption no longer holds:
+
+* `li { display: inline }` (common in navigations) - whitespace between list
+  items becomes significant. `li` is therefore **not** treated as block-level by
+  default; it only costs one byte per list item. Use
+  [setBlockElements()](#setblockelementselements-html-only) to change the list
+  either way.
+* `white-space: pre` (or `pre-wrap`/`break-spaces`) on anything other than
+  `<pre>`/`<textarea>` - *all* whitespace inside it is significant. If the rule
+  targets a whole element (`code`, a custom element, ...), add it via
+  [setVerbatimElements()](#setverbatimelementselements-html-only). If it targets
+  a class (`div.code { white-space: pre }`), there is no way to express that
+  here - whitespace inside those elements will be collapsed, so don't minify
+  markup that relies on it.
+
+If neither applies to your markup, the default settings leave the rendered page
+identical. See
+[setAggressiveWhitespace()](#setaggressivewhitespaceaggressive-html-only) if you
+want to trade that for a few more bytes.
 
 
 ## Methods
@@ -193,6 +211,27 @@ content is kept as-is rather than failing the whole document.
 
 ```php
 $minifier->setMinifyInlineAssets(false);
+```
+
+### setBlockElements($elements) *(HTML only)*
+
+The elements next to which whitespace is removed entirely rather than collapsed
+to a single space. The default list is derived from each element's default CSS
+display; override it when your stylesheet differs.
+
+```php
+// our nav uses `li { display: inline }`, but our `span`s are all display:block
+$minifier->setBlockElements(array('div', 'p', 'ul', 'span'));
+```
+
+### setVerbatimElements($elements) *(HTML only)*
+
+The elements whose content is passed through untouched. Defaults to `pre` and
+`textarea`; add anything your CSS gives `white-space: pre`, since whitespace
+inside those is significant and the markup alone doesn't say so.
+
+```php
+$minifier->setVerbatimElements(array('pre', 'textarea', 'code-sample'));
 ```
 
 

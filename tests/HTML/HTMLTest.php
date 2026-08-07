@@ -105,6 +105,45 @@ class HTMLTest extends CompatTestCase
     }
 
     /**
+     * The block-element list goes by each element's default display, which CSS
+     * can override. `li` is therefore not in it by default (`li{display:inline}`
+     * is common in navigations), but can be added.
+     */
+    public function testBlockElementsAreConfigurable()
+    {
+        $list = "<ul>\n  <li>one</li>\n  <li>two</li>\n</ul>";
+
+        // by default the single space between list items survives, which costs
+        // one byte per item but keeps `li{display:inline}` rendering the same
+        $minifier = $this->getMinifier();
+        $minifier->add($list);
+        $this->assertEquals('<ul><li>one</li> <li>two</li></ul>', $minifier->minify());
+
+        $minifier = $this->getMinifier();
+        $minifier->setBlockElements(array('ul', 'li'));
+        $minifier->add($list);
+        $this->assertEquals('<ul><li>one</li><li>two</li></ul>', $minifier->minify());
+    }
+
+    /**
+     * Whitespace is significant in anything styled `white-space: pre`, which
+     * can't be seen from the markup, so the verbatim list is configurable too.
+     */
+    public function testVerbatimElementsAreConfigurable()
+    {
+        $html = '<div>  <my-code>  a   b  </my-code>  </div>';
+
+        $minifier = $this->getMinifier();
+        $minifier->add($html);
+        $this->assertEquals('<div><my-code> a b </my-code></div>', $minifier->minify());
+
+        $minifier = $this->getMinifier();
+        $minifier->setVerbatimElements(array('pre', 'textarea', 'my-code'));
+        $minifier->add($html);
+        $this->assertEquals('<div><my-code>  a   b  </my-code></div>', $minifier->minify());
+    }
+
+    /**
      * The placeholders used internally must never survive into the output, no
      * matter how many things get extracted.
      */
@@ -279,6 +318,49 @@ class HTMLTest extends CompatTestCase
         $tests[] = array(
             "\n  <p>a</p>\n  ",
             '<p>a</p>',
+        );
+
+        /*
+         * An unclosed <script>/<style>/<pre>/<textarea> runs to the end of the
+         * input as far as a browser is concerned. Its content must still be
+         * treated as that element's content, not collapsed as if it were markup
+         * - which would silently rewrite the whitespace inside a string.
+         */
+        $tests[] = array(
+            '<script>var s = "a    b";',
+            '<script>var s="a    b"',
+        );
+        $tests[] = array(
+            '<style>a::after{content:"x    y"}',
+            '<style>a::after{content:"x    y"}',
+        );
+        $tests[] = array(
+            '<textarea>a    b',
+            '<textarea>a    b',
+        );
+        $tests[] = array(
+            '<div><pre>  keep  ',
+            '<div><pre>  keep  ',
+        );
+
+        // a closing tag keeps its name & case, and only loses whitespace
+        $tests[] = array(
+            '<script>var a = 1;</script >',
+            '<script>var a=1</script>',
+        );
+        $tests[] = array(
+            '<SCRIPT>var a=1</SCRIPT>',
+            '<SCRIPT>var a=1</SCRIPT>',
+        );
+        $tests[] = array(
+            '<STYLE>a{color:red}</STYLE>',
+            '<STYLE>a{color:red}</STYLE>',
+        );
+
+        // table cells & options are still trimmed: they're in the block list
+        $tests[] = array(
+            "<table>\n<tr>\n<td>a</td>\n<td>b</td>\n</tr>\n</table>",
+            '<table><tr><td>a</td><td>b</td></tr></table>',
         );
 
         return $tests;

@@ -42,7 +42,10 @@ class HTML extends Minify
      *
      * @var string
      */
-    public const REGEX_ATTRIBUTES = '(?:\s+[^\s=\/>]+(?:\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s"\'>]*))?)*';
+    // NOTE: no explicit `public` here - constant visibility is PHP 7.1+ syntax,
+    // and composer.json still supports 5.3 (CI runs 5.5 upwards.) php-cs-fixer
+    // will suggest adding it; JS::REGEX_VARIABLE is left the same way.
+    const REGEX_ATTRIBUTES = '(?:\s+[^\s=\/>]+(?:\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s"\'>]*))?)*';
 
     /**
      * Elements whose content is rendered exactly as authored, whitespace and
@@ -62,8 +65,13 @@ class HTML extends Minify
      * These are the block-level elements, plus the ones that aren't rendered at
      * all (`script`, `style`, `link`, `meta`, `base`, `title`).
      *
-     * Note `br` is deliberately absent: it is inline, and a space in front of it
-     * *is* rendered.
+     * Note this goes by each element's *default* display: a stylesheet can turn
+     * any of them inline, and then the whitespace next to it does render. `li`
+     * is deliberately absent for exactly that reason - `li {display: inline}`
+     * is common enough in navigations that it isn't worth the single byte per
+     * list item. Use setBlockElements() to change the list either way.
+     *
+     * `br` is absent too: it is inline, and a space in front of it is rendered.
      *
      * @var string[]
      */
@@ -71,7 +79,7 @@ class HTML extends Minify
         'address', 'article', 'aside', 'base', 'blockquote', 'body', 'caption',
         'colgroup', 'dd', 'details', 'dialog', 'div', 'dl', 'dt', 'fieldset',
         'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5',
-        'h6', 'head', 'header', 'hgroup', 'hr', 'html', 'legend', 'li', 'link',
+        'h6', 'head', 'header', 'hgroup', 'hr', 'html', 'legend', 'link',
         'main', 'menu', 'meta', 'nav', 'ol', 'optgroup', 'option', 'p',
         'script', 'section', 'style', 'summary', 'table', 'tbody', 'td',
         'tfoot', 'th', 'thead', 'title', 'tr', 'ul',
@@ -151,6 +159,38 @@ class HTML extends Minify
     public function setMinifyInlineAssets($minify = true)
     {
         $this->minifyInlineAssets = (bool) $minify;
+    }
+
+    /**
+     * Replace the list of elements next to which whitespace is removed entirely
+     * rather than collapsed to a single space.
+     *
+     * The default list goes by each element's default display, which a
+     * stylesheet can override: if your CSS makes a block-level element inline,
+     * take it out of this list, and if it makes an inline element block-level you
+     * can add it in.
+     *
+     * @param string[] $elements Lowercased element names
+     */
+    public function setBlockElements(array $elements)
+    {
+        $this->blockElements = $elements;
+    }
+
+    /**
+     * Replace the list of elements whose content is passed through untouched.
+     *
+     * Defaults to `pre` & `textarea`, the two elements that render whitespace
+     * as authored out of the box. If your CSS applies `white-space: pre` (or
+     * `pre-wrap`/`break-spaces`) to something else, add it here - whitespace
+     * inside it is significant, and this minifier has no way of knowing that
+     * from the markup alone.
+     *
+     * @param string[] $elements Lowercased element names
+     */
+    public function setVerbatimElements(array $elements)
+    {
+        $this->verbatimElements = $elements;
     }
 
     /**
@@ -305,10 +345,17 @@ class HTML extends Minify
     {
         $minifier = $this;
         foreach ($this->verbatimElements as $element) {
+            /*
+             * The closing tag is optional: an unclosed <pre> or <textarea> runs
+             * to the end of the input as far as a browser is concerned. Without
+             * this the pattern simply wouldn't match, and the content would then
+             * be collapsed as if it were ordinary markup - silently destroying
+             * the very whitespace this element exists to preserve.
+             */
             $this->registerPattern(
                 '/<' . $element . '\b' . self::REGEX_ATTRIBUTES . '\s*>'
                 . self::upTo('<', '\/' . $element . '\s*>')
-                . '<\/' . $element . '\s*>/is',
+                . '(?:<\/' . $element . '\s*>)?/is',
                 function ($match) use ($minifier) {
                     return $minifier->extract($match[0]);
                 }
@@ -323,9 +370,14 @@ class HTML extends Minify
     {
         $minifier = $this;
         $this->registerPattern(
-            '/(<style\b' . self::REGEX_ATTRIBUTES . '\s*>)(' . self::upTo('<', '\/style\s*>') . ')<\/style\s*>/is',
+            '/(<style\b' . self::REGEX_ATTRIBUTES . '\s*>)('
+            . self::upTo('<', '\/style\s*>') . ')(<\/style\s*>)?/is',
             function ($match) use ($minifier) {
-                return $minifier->rebuildElement($match[1], $minifier->minifyInline($match[2], 'css'), 'style');
+                return $minifier->rebuildElement(
+                    $match[1],
+                    $minifier->minifyInline($match[2], 'css'),
+                    isset($match[3]) ? $match[3] : ''
+                );
             }
         );
     }
@@ -338,13 +390,14 @@ class HTML extends Minify
     {
         $minifier = $this;
         $this->registerPattern(
-            '/(<script\b' . self::REGEX_ATTRIBUTES . '\s*>)(' . self::upTo('<', '\/script\s*>') . ')<\/script\s*>/is',
+            '/(<script\b' . self::REGEX_ATTRIBUTES . '\s*>)('
+            . self::upTo('<', '\/script\s*>') . ')(<\/script\s*>)?/is',
             function ($match) use ($minifier) {
                 $type = strtolower(trim($minifier->attributeValue($match[1], 'type')));
                 $isJavascript = $type === '' || in_array($type, $minifier->getJavascriptTypes(), true);
                 $content = $isJavascript ? $minifier->minifyInline($match[2], 'js') : $match[2];
 
-                return $minifier->rebuildElement($match[1], $content, 'script');
+                return $minifier->rebuildElement($match[1], $content, isset($match[3]) ? $match[3] : '');
             }
         );
     }
@@ -362,15 +415,21 @@ class HTML extends Minify
      *
      * @param string $openingTag
      * @param string $content
-     * @param string $element
+     * @param string $closingTag Empty when the element was never closed
      *
      * @return string
      */
-    public function rebuildElement($openingTag, $content, $element)
+    public function rebuildElement($openingTag, $content, $closingTag)
     {
+        // keep the closing tag as authored, bar whitespace before its `>`, so
+        // that its name & case round-trip instead of being lowercased for us
+        if ($closingTag !== '') {
+            $closingTag = preg_replace('/\s+>$/', '>', $closingTag);
+        }
+
         return $this->normalizeTag($openingTag)
             . ($content === '' ? '' : $this->extract($content))
-            . '</' . $element . '>';
+            . $closingTag;
     }
 
     /**
