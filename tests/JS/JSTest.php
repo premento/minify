@@ -131,6 +131,14 @@ class JSTest extends CompatTestCase
             '/abc\/def\\\\\//.test("abc/def\\\/")',
         );
         $tests[] = array(
+            'const regex = /hello   world/s;',
+            'const regex=/hello   world/s',
+        );
+        $tests[] = array(
+            'const regex = /hello   world/dgimsuv;',
+            'const regex=/hello   world/dgimsuv',
+        );
+        $tests[] = array(
             // escape mess, this represents:
             // /abc\/def\\\\\//.test("abc/def\\\\/")
             '/abc\/def\\\\\\\\\//.test("abc/def\\\\\\\\/")',

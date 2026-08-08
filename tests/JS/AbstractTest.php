@@ -4,8 +4,8 @@ namespace Premento\Minify\Tests\JS;
 
 use Premento\Minify;
 use Premento\Minify\Tests\CompatTestCase;
-use Premento\Scrapbook\Adapters\MemoryStore;
-use Premento\Scrapbook\Psr6\Pool;
+use MatthiasMullie\Scrapbook\Adapters\MemoryStore;
+use MatthiasMullie\Scrapbook\Psr6\Pool;
 
 /**
  * Tests common functions of abstract Minify class by using JS implementation.

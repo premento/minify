@@ -14,8 +14,8 @@ namespace Premento\Minify;
 
 use Premento\Minify\Exceptions\FileImportException;
 use Premento\Minify\Exceptions\PatternMatchException;
-use Premento\PathConverter\Converter;
-use Premento\PathConverter\ConverterInterface;
+use MatthiasMullie\PathConverter\Converter;
+use MatthiasMullie\PathConverter\ConverterInterface;
 
 /**
  * CSS minifier.
