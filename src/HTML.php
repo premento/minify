@@ -89,7 +89,8 @@ class HTML extends Minify
      * `type` values marking a <script> whose content is JavaScript & can be run
      * through the JS minifier. An absent type also means JavaScript.
      *
-     * Anything else - JSON-LD, an inline template, ... - is left untouched.
+     * Anything that is neither this nor $jsonTypes - an inline template, ... -
+     * is left untouched.
      *
      * @var string[]
      */
@@ -105,6 +106,22 @@ class HTML extends Minify
         'text/livescript',
         'text/x-ecmascript',
         'text/x-javascript',
+    );
+
+    /**
+     * `type` values marking a <script> whose content is JSON, and can therefore
+     * be re-serialized without its formatting.
+     *
+     * JSON-LD is the common one, but import maps & speculation rules are JSON
+     * documents in a <script> too, and minify exactly the same way.
+     *
+     * @var string[]
+     */
+    protected $jsonTypes = array(
+        'application/json',
+        'application/ld+json',
+        'importmap',
+        'speculationrules',
     );
 
     /**
@@ -383,8 +400,8 @@ class HTML extends Minify
     }
 
     /**
-     * <script> content is only JavaScript for certain `type`s; anything else
-     * (JSON-LD, an inline template, ...) is kept verbatim.
+     * <script> content is JavaScript or JSON for certain `type`s; anything else
+     * (an inline template, ...) is kept verbatim.
      */
     protected function extractScripts()
     {
@@ -393,13 +410,51 @@ class HTML extends Minify
             '/(<script\b' . self::REGEX_ATTRIBUTES . '\s*>)('
             . self::upTo('<', '\/script\s*>') . ')(<\/script\s*>)?/is',
             function ($match) use ($minifier) {
-                $type = strtolower(trim($minifier->attributeValue($match[1], 'type')));
-                $isJavascript = $type === '' || in_array($type, $minifier->getJavascriptTypes(), true);
-                $content = $isJavascript ? $minifier->minifyInline($match[2], 'js') : $match[2];
+                switch ($minifier->scriptType($match[1])) {
+                    case 'js':
+                        $content = $minifier->minifyInline($match[2], 'js');
+                        break;
+                    case 'json':
+                        $content = $minifier->minifyJson($match[2]);
+                        break;
+                    default:
+                        $content = $match[2];
+                }
 
                 return $minifier->rebuildElement($match[1], $content, isset($match[3]) ? $match[3] : '');
             }
         );
+    }
+
+    /**
+     * What the content of a <script> is, going by its `type`.
+     *
+     * @internal
+     *
+     * @param string $openingTag
+     *
+     * @return string 'js', 'json', or '' for content to be left alone
+     */
+    public function scriptType($openingTag)
+    {
+        $type = strtolower(trim($this->attributeValue($openingTag, 'type')));
+
+        /*
+         * A media type may carry parameters - `text/javascript; charset=utf-8`,
+         * `application/ld+json;profile=...` - which say nothing about what the
+         * content is; only the type itself decides that.
+         */
+        $type = rtrim(strstr($type . ';', ';', true));
+
+        if ($type === '' || in_array($type, $this->javascriptTypes, true)) {
+            return 'js';
+        }
+
+        if (in_array($type, $this->jsonTypes, true)) {
+            return 'json';
+        }
+
+        return '';
     }
 
     /**
@@ -579,6 +634,73 @@ class HTML extends Minify
     }
 
     /**
+     * Re-serialize a JSON document (JSON-LD, an import map, ...) without the
+     * whitespace it was formatted with.
+     *
+     * This goes through the JSON parser rather than a whitespace pattern
+     * because whitespace inside a string value is content, and telling the two
+     * apart with a regex means re-implementing JSON string parsing. Anything
+     * that doesn't parse is left exactly as it was: a page with hand-broken
+     * structured data on it should still minify.
+     *
+     * Slashes are deliberately left escaped. `<\/script>` inside a string is
+     * the usual way of writing a literal `</script>` that doesn't end the
+     * element, and unescaping it would cut the document in half.
+     *
+     * @internal
+     *
+     * @param string $content
+     *
+     * @return string
+     */
+    public function minifyJson($content)
+    {
+        $content = trim($content);
+        if (!$this->minifyInlineAssets || $content === '') {
+            return $content;
+        }
+
+        /*
+         * An integer too large for PHP is decoded as a float, and 2^53 upwards
+         * that float is no longer the number that was written down - writing it
+         * back out would silently change the value. Doubles hold integers
+         * exactly up to 16 digits, so anything longer is left alone. This also
+         * matches long digit runs inside strings, where it costs nothing but a
+         * missed minification.
+         */
+        if (preg_match('/(?<![\w.])\d{16,}/', $content)) {
+            return $content;
+        }
+
+        // decoded to objects, not associative arrays: an empty object would
+        // come back as an empty array & re-encode to `[]` instead of `{}`
+        $data = json_decode($content);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return $content;
+        }
+
+        $flags = 0;
+        if (defined('JSON_UNESCAPED_UNICODE')) {
+            // PHP 5.4+; non-ASCII is a lot shorter as itself than as \uXXXX
+            $flags |= JSON_UNESCAPED_UNICODE;
+        }
+        $minified = json_encode($data, $flags);
+
+        /*
+         * json_encode can fail outright (invalid UTF-8), and re-encoding can
+         * come out *longer* than what went in - floats are written back at
+         * serialize_precision, which on older PHP turns 0.1 into
+         * 0.10000000000000001. Either way, what was authored is the better
+         * output.
+         */
+        if (!is_string($minified) || strlen($minified) >= strlen($content)) {
+            return $content;
+        }
+
+        return $minified;
+    }
+
+    /**
      * @internal
      *
      * @return string[]
@@ -586,6 +708,16 @@ class HTML extends Minify
     public function getJavascriptTypes()
     {
         return $this->javascriptTypes;
+    }
+
+    /**
+     * @internal
+     *
+     * @return string[]
+     */
+    public function getJsonTypes()
+    {
+        return $this->jsonTypes;
     }
 
     /**

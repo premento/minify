@@ -61,6 +61,52 @@ class HTMLTest extends CompatTestCase
     }
 
     /**
+     * Switching inline asset minification off covers JSON content as well.
+     */
+    public function testMinifyInlineJsonDisabled()
+    {
+        $minifier = $this->getMinifier();
+        $minifier->setMinifyInlineAssets(false);
+        $minifier->add("<script type=\"application/ld+json\">\n  {\n    \"a\": 1\n  }\n</script>");
+
+        $this->assertEquals(
+            "<script type=\"application/ld+json\">{\n    \"a\": 1\n  }</script>",
+            $minifier->minify()
+        );
+    }
+
+    /**
+     * A literal `</script>` inside a JSON string is written `<\/script>` - that
+     * escape is what stops it ending the element, so re-serializing must not
+     * unescape it.
+     */
+    public function testJsonKeepsEscapedClosingTag()
+    {
+        $minifier = $this->getMinifier();
+        $minifier->add('<script type="application/ld+json">{"a":   "x<\/script>y"}</script>');
+
+        $result = $minifier->minify();
+
+        $this->assertStringNotContainsString('x</script>y', $result);
+        $this->assertEquals('<script type="application/ld+json">{"a":"x<\/script>y"}</script>', $result);
+    }
+
+    /**
+     * Whitespace inside a JSON string is content, not formatting: only the
+     * formatting around the values may go.
+     */
+    public function testJsonKeepsWhitespaceInsideStrings()
+    {
+        $minifier = $this->getMinifier();
+        $minifier->add("<script type=\"application/ld+json\">\n{\"description\": \"two  spaces\\nand a newline\"}\n</script>");
+
+        $this->assertEquals(
+            '<script type="application/ld+json">{"description":"two  spaces\nand a newline"}</script>',
+            $minifier->minify()
+        );
+    }
+
+    /**
      * An inline asset the CSS/JS minifier chokes on must not take the whole page
      * with it: its content is passed through untouched & the rest of the
      * document is still minified.
@@ -236,11 +282,39 @@ class HTMLTest extends CompatTestCase
             '<script>var a=!0;function f(){return a}</script>',
         );
 
-        // ... but only when the content actually is JavaScript
+        // JSON content is re-serialized rather than run through the JS minifier
         $tests[] = array(
-            '<script type="application/ld+json">{"@context": "https://schema.org"}</script>',
-            '<script type="application/ld+json">{"@context": "https://schema.org"}</script>',
+            "<script type=\"application/ld+json\">\n  {\n    \"@context\": \"https://schema.org\",\n"
+            . "    \"name\": \"a  b\"\n  }\n</script>",
+            '<script type="application/ld+json">{"@context":"https:\/\/schema.org","name":"a  b"}</script>',
         );
+        // a media type's parameters say nothing about what the content is
+        $tests[] = array(
+            '<script type="application/ld+json; charset=utf-8">{"a": 1}</script>',
+            '<script type="application/ld+json; charset=utf-8">{"a":1}</script>',
+        );
+        // import maps & speculation rules are JSON in a <script> too
+        $tests[] = array(
+            "<script type=\"importmap\">{\n  \"imports\": {\"a\": \"/a.js\"}\n}</script>",
+            '<script type="importmap">{"imports":{"a":"\/a.js"}}</script>',
+        );
+        // an empty object must stay an object rather than becoming `[]`
+        $tests[] = array(
+            '<script type="application/ld+json">{ "a": {} }</script>',
+            '<script type="application/ld+json">{"a":{}}</script>',
+        );
+        // JSON that doesn't parse is kept as authored rather than dropped
+        $tests[] = array(
+            '<script type="application/ld+json">{"a": 1,}</script>',
+            '<script type="application/ld+json">{"a": 1,}</script>',
+        );
+        // an integer PHP can't hold exactly would come back out as a float
+        $tests[] = array(
+            '<script type="application/ld+json">{"id": 12345678901234567890}</script>',
+            '<script type="application/ld+json">{"id": 12345678901234567890}</script>',
+        );
+
+        // ... and anything that is neither JavaScript nor JSON is left alone
         $tests[] = array(
             '<script type="text/x-template"><div>  {{ x }}  </div></script>',
             '<script type="text/x-template"><div>  {{ x }}  </div></script>',

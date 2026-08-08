@@ -25,6 +25,7 @@ Removes whitespace, strips comments, combines files (incl. `@import` statements 
 * whitespace collapsed, and removed entirely where it can't be rendered
 * comments removed (conditional comments & `@license`/`@preserve` kept)
 * inline `<style>` & `<script>` minified with the CSS & JS minifiers
+* JSON-LD & other JSON `<script>`s re-serialized without their formatting
 * `<script type="text/javascript">` -> `<script>`
 
 And it comes with a huge test suite.
@@ -205,9 +206,15 @@ $minifier->setAggressiveWhitespace();
 By default, the content of `<style>` and `<script>` elements is minified with
 this library's CSS and JS minifiers. Pass `false` to leave it untouched.
 
-Content that isn't JavaScript (`<script type="application/ld+json">`, inline
-templates, ...) is always left alone. If minifying an inline asset fails, its
-content is kept as-is rather than failing the whole document.
+A `<script>` holding JSON rather than JavaScript - `application/ld+json`,
+`application/json`, `importmap`, `speculationrules` - is re-serialized instead,
+which drops its formatting without touching whitespace inside string values.
+Slashes stay escaped, so a `<\/script>` in a string can't break out of the
+element.
+
+Content that is neither JavaScript nor JSON (inline templates, ...) is left
+alone. If minifying an inline asset fails, or JSON doesn't parse, the content is
+kept as-is rather than failing the whole document.
 
 ```php
 $minifier->setMinifyInlineAssets(false);
